@@ -1,0 +1,93 @@
+---
+title: "Interactive Cox Model & Cumulative Incidence Curve"
+output: html_document
+---
+  
+  ```{r setup, include=FALSE}
+# Load libraries
+library(survival)
+library(survminer)
+library(shiny)  # For interactive input
+
+
+set.seed(123)
+
+n <- 500
+
+# Covariates
+age <- rnorm(n, 50, 10)
+bmi <- rnorm(n, 25, 4)
+ses <- runif(n, 1, 5)
+
+# Ethnicity: One-hot encode
+ethnicity <- sample(c("black", "white", "asian", "other"), n, replace = TRUE)
+eth_black <- ifelse(ethnicity == "black", 1, 0)
+eth_white <- ifelse(ethnicity == "white", 1, 0)
+eth_asian <- ifelse(ethnicity == "asian", 1, 0)
+
+# Beta coefficients
+beta <- c(age = -0.2, eth_black = -0.4, eth_white = -0.1, eth_asian = -0.6, bmi = 1, ses = 0.5)
+
+# Linear predictor
+lp <- beta["age"] * age + beta["eth_black"] * eth_black +
+  beta["eth_white"] * eth_white + beta["eth_asian"] * eth_asian +
+  beta["bmi"] * bmi + beta["ses"] * ses
+
+# Simulate survival time
+baseline_hazard <- 0.01
+time <- rexp(n, rate = baseline_hazard * exp(lp))
+status <- rbinom(n, 1, 0.8)
+
+# Dataframe
+sim_data <- data.frame(time, status, age, eth_black, eth_white, eth_asian, bmi, ses)
+
+cox_model <- coxph(Surv(time, status) ~ age + eth_black + eth_white + eth_asian + bmi + ses, data = sim_data)
+summary(cox_model)
+
+fit <- survfit(cox_model, newdata = sim_data[1:1, ])  # Use 1 sample for illustration
+ggsurvplot(fit, data = sim_data,
+           conf.int = TRUE,
+           risk.table = TRUE,
+           xlab = "Time",
+           ylab = "Survival Probability",
+           title = "Cumulative Incidence Curve (Survival Curve)")
+shinyApp(
+  ui = fluidPage(
+    titlePanel("Customize Your Cox Model Curve"),
+    sidebarLayout(
+      sidebarPanel(
+        sliderInput("age", "Age:", min = 20, max = 80, value = 50),
+        sliderInput("bmi", "BMI:", min = 15, max = 40, value = 25),
+        sliderInput("ses", "SES (1=Low, 5=High):", min = 1, max = 5, value = 3),
+        selectInput("ethnicity", "Ethnicity:", choices = c("Other", "Black", "White", "Asian"))
+      ),
+      mainPanel(
+        plotOutput("survPlot")
+      )
+    )
+  ),
+  server = function(input, output) {
+    output$survPlot <- renderPlot({
+      # Set ethnicity indicators
+      eth_black <- as.numeric(input$ethnicity == "Black")
+      eth_white <- as.numeric(input$ethnicity == "White")
+      eth_asian <- as.numeric(input$ethnicity == "Asian")
+      
+      # Create new input data row
+      new_data <- data.frame(
+        age = input$age,
+        eth_black = eth_black,
+        eth_white = eth_white,
+        eth_asian = eth_asian,
+        bmi = input$bmi,
+        ses = input$ses
+      )
+      
+      # Fit survival
+      fit <- survfit(cox_model, newdata = new_data)
+      
+      # Plot
+      ggsurvplot(fit, conf.int = TRUE, ggtheme = theme_minimal(), risk.table = FALSE)
+    })
+  }
+)
